@@ -72,9 +72,9 @@ resource "aws_route_table" "public" {
   }
 }
 
-resource "aws_main_route_table_association" "public" {
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
-  vpc_id         = aws_vpc.this.id
 }
 
 # ================= Security Group (1 VPC - N SG) =================
