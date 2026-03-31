@@ -3,6 +3,7 @@
   <component name="AdditionalModuleElements">
     <content url="file://$MODULE_DIR$" dumb="true">
       <excludeFolder url="file://$MODULE_DIR$/aws/lession_1/terraform/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/aws/lession_2/terraform/.terraform" />
     </content>
   </component>
 </module>

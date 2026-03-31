@@ -40,3 +40,5 @@ terraform.rc
 /target
 *.pem
 /*.pem
+*.deb
+/*.deb
