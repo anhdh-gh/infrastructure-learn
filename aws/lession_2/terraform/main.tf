@@ -53,6 +53,16 @@ resource "aws_subnet" "private-db" {
   }
 }
 
+resource "aws_subnet" "public-2" {
+  vpc_id = aws_vpc.this.id
+  cidr_block = "10.0.4.0/24"
+  availability_zone = "ap-southeast-1b"
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "public-2"
+  }
+}
+
 # ============ Internet Gateway (1 VPC - 1 IGW)  ============
 resource "aws_internet_gateway" this {
   vpc_id = aws_vpc.this.id
@@ -104,12 +114,20 @@ resource "aws_route_table_association" "private-app" {
 resource "aws_security_group" "ec2-sg" {
   vpc_id = aws_vpc.this.id
 
-  # Outbound allow all
+  # Outbound allow all (download docker, ...)
   egress {
     from_port = 0
     to_port = 0
     cidr_blocks = [ "0.0.0.0/0" ]
     protocol = "-1"
+  }
+
+  # Inbound allow ALB
+  ingress {
+    from_port = 8080
+    to_port = 8080
+    protocol = "tcp"
+    security_groups = [ aws_security_group.alb-sg.id ] # Cho phép traffic tới từ các instance có sg = alb-sg
   }
 }
 
@@ -156,4 +174,60 @@ resource "aws_instance" this {
 
 output "ec2_instance_id" {
   value = aws_instance.this.id
+}
+
+# ======================== Application Load Balancer (1 Vpc - N ALB) ========================
+resource "aws_security_group" "alb-sg" {
+  vpc_id = aws_vpc.this.id
+
+  # Inbound allow 80
+  ingress {
+    from_port = 80
+    to_port = 80
+    protocol = "TCP"
+    cidr_blocks = [ "0.0.0.0/0" ]
+  }
+
+  # Outbound allow when forward request to EC2 private (8080)
+  egress {
+    from_port = 8080
+    to_port = 8080
+    protocol = "tcp"
+    cidr_blocks = ["10.0.2.0/24"] # private-app
+  }
+}
+
+# ALB
+resource "aws_lb" "this" {
+  name = "alb"
+  load_balancer_type = "application"
+  subnets = [ aws_subnet.public.id, aws_subnet.public-2.id ] // ALB required 2 public subnet for HA
+  security_groups = [ aws_security_group.alb-sg.id ]
+}
+
+resource "aws_lb_target_group" this {
+  port = 8080
+  protocol = "HTTP"
+  vpc_id = aws_vpc.this.id
+}
+
+# ALB (listen 80) -> Target group (8080) -> Instance
+resource "aws_alb_listener" listener {
+  load_balancer_arn = aws_lb.this.arn
+  port = 80
+  protocol = "HTTP"
+  default_action {
+    type = "forward"
+    target_group_arn = aws_lb_target_group.this.arn
+  }
+}
+
+resource "aws_lb_target_group_attachment" "this" {
+  target_group_arn = aws_lb_target_group.this.arn
+  target_id = aws_instance.this.id
+  port = 8080
+}
+
+output "alb_dns" {
+  value = aws_lb.this.dns_name
 }
