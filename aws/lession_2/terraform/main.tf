@@ -167,38 +167,17 @@ resource "aws_iam_role_policy_attachment" "dynamodb" {
 
 # Create EC2 instance
 # 1 instance - N Security Group
-resource "aws_instance" this {
-  ami = "ami-05e0d9d655f80bc27"
-  instance_type = "t2.micro"
-  subnet_id = aws_subnet.private-app.id
-  iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
-  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
-  depends_on = [ aws_nat_gateway.this ]
-  tags = {
-    Name = "3tier-ec2-private"
-  }
-}
-
-# EC2 private 2
-resource "aws_instance" "ec2-private-2" {
-  ami = "ami-05e0d9d655f80bc27"
-  instance_type = "t2.micro"
-  subnet_id = aws_subnet.private-app.id
-  iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
-  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
-  depends_on = [ aws_nat_gateway.this ]
-  tags = {
-    Name = "3tier-ec2-private-2"
-  }
-}
-
-output "ec2_instance_id" {
-  value = aws_instance.this.id
-}
-
-output "ec2_instance_id_2" {
-  value = aws_instance.ec2-private-2.id
-}
+# resource "aws_instance" this {
+#   ami = "ami-05e0d9d655f80bc27"
+#   instance_type = "t2.micro"
+#   subnet_id = aws_subnet.private-app.id
+#   iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
+#   vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+#   depends_on = [ aws_nat_gateway.this ]
+#   tags = {
+#     Name = "3tier-ec2-private"
+#   }
+# }
 
 # ======================== Application Load Balancer (1 Vpc - N ALB) ========================
 resource "aws_security_group" "alb-sg" {
@@ -246,18 +225,6 @@ resource "aws_alb_listener" listener {
   }
 }
 
-resource "aws_lb_target_group_attachment" "tg-ec2" {
-  target_group_arn = aws_lb_target_group.this.arn
-  target_id = aws_instance.this.id
-  port = 8080
-}
-
-resource "aws_lb_target_group_attachment" "tg-ec2-2" {
-  target_group_arn = aws_lb_target_group.this.arn
-  target_id = aws_instance.ec2-private-2.id
-  port = 8080
-}
-
 output "alb_dns" {
   value = aws_lb.this.dns_name
 }
@@ -282,4 +249,93 @@ resource "aws_vpc_endpoint" "dynamodb" {
   service_name = "com.amazonaws.ap-southeast-1.dynamodb"
   vpc_endpoint_type = "Gateway"
   route_table_ids = [ aws_route_table.private.id ]
+}
+
+# ======================== Amazon Machine Images ========================
+# resource "time_sleep" "wait" {
+#   depends_on = [aws_instance.this.id]
+#   create_duration = "120s"
+# }
+
+# resource "aws_ami_from_instance" "ec2-image" {
+#   name               = "ec2-image"
+#   source_instance_id = aws_instance.this.id
+#   # depends_on = [time_sleep.wait]
+# }
+
+# ======================== Auto Scaling Group ========================
+resource "aws_launch_template" "app" {
+  name_prefix   = "app-template"
+  image_id      = "ami-0914799bdc2a07d8d"
+  instance_type = "t2.micro"
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2-profile.name
+  }
+  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  user_data = base64encode(<<-EOF
+      #!/bin/bash
+      sudo docker pull anhdhdocker/java-springboot-service:latest
+      sudo docker rm -f springboot-app || true
+      sudo docker run -d --name springboot-app -p 8080:8080 anhdhdocker/java-springboot-service:latest
+    EOF
+  )
+}
+
+resource "aws_autoscaling_group" "app" {
+  desired_capacity = 2
+  max_size = 3
+  min_size = 1
+  launch_template {
+    id = aws_launch_template.app.id
+    version = "$Latest"
+  }
+  vpc_zone_identifier = [ aws_subnet.private-app.id ] # Subnet mà EC2 sẽ tạo
+  target_group_arns = [ aws_lb_target_group.this.arn ] # Attach vào ALB
+  health_check_type = "EC2" # ELB - Check health qua ALB, EC2 - Check sống/chết
+}
+
+# Scale up
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "scale-up"
+  scaling_adjustment     = 1
+  adjustment_type        = "ChangeInCapacity"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "cpu_high"
+  comparison_operator = "GreaterThanThreshold"
+  threshold = 70
+  evaluation_periods = 2 # CPU > 70% trong 2 phút liên tiếp → alarm kích hoạt
+  period = 60
+  metric_name = "CPUUtilization"
+  namespace   = "AWS/EC2"
+  statistic   = "Average"
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app.name
+  }
+  alarm_actions = [aws_autoscaling_policy.scale_up.arn]
+}
+
+# Scale down
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "scale-down"
+  scaling_adjustment     = -1
+  adjustment_type        = "ChangeInCapacity"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  alarm_name          = "cpu-low"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1 # 1% For test
+  evaluation_periods = 2
+  period             = 60
+  metric_name = "CPUUtilization"
+  namespace   = "AWS/EC2"
+  statistic   = "Average"
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app.name
+  }
+  alarm_actions = [aws_autoscaling_policy.scale_down.arn]
 }
