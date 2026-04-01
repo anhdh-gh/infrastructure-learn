@@ -79,6 +79,7 @@ resource "aws_eip" "nat_public_ip" {
 resource "aws_nat_gateway" this {
   subnet_id = aws_subnet.public.id
   allocation_id = aws_eip.nat_public_ip.id
+  depends_on = [ aws_internet_gateway.this ]
 }
 
 # ======================== Route Table ========================
@@ -133,8 +134,8 @@ resource "aws_security_group" "ec2-sg" {
 
 # ======================== EC2 ========================
 # IAM role for SSM: Xác định AI được phép dùng role
-resource "aws_iam_role" "ec2_ssm_role" {
-  name = "ec2_ssm_role"
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2_role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -147,16 +148,21 @@ resource "aws_iam_role" "ec2_ssm_role" {
   })
 }
 
-# Gắn quyền vào role: Role này được phép làm gì
-resource "aws_iam_role_policy_attachment" "ssm_attach" {
-  role       = aws_iam_role.ec2_ssm_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 # Tạo profile để gắn role vào EC2
 resource "aws_iam_instance_profile" "ec2-profile" {
   name = "ec2-ssm-profile"
-  role = aws_iam_role.ec2_ssm_role.name
+  role = aws_iam_role.ec2_role.name
+}
+
+# Gắn quyền vào role: Role này được phép làm gì
+resource "aws_iam_role_policy_attachment" "ssm_attach" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "dynamodb" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
 }
 
 # Create EC2 instance
@@ -167,6 +173,7 @@ resource "aws_instance" this {
   subnet_id = aws_subnet.private-app.id
   iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
   vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  depends_on = [ aws_nat_gateway.this ]
   tags = {
     Name = "3tier-ec2-private"
   }
@@ -179,6 +186,7 @@ resource "aws_instance" "ec2-private-2" {
   subnet_id = aws_subnet.private-app.id
   iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
   vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  depends_on = [ aws_nat_gateway.this ]
   tags = {
     Name = "3tier-ec2-private-2"
   }
@@ -252,4 +260,26 @@ resource "aws_lb_target_group_attachment" "tg-ec2-2" {
 
 output "alb_dns" {
   value = aws_lb.this.dns_name
+}
+
+# ======================== DynamoDB ========================
+resource "aws_dynamodb_table" "users" {
+  name = "users"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key = "user_id"
+  attribute {
+    name = "user_id"
+    type = "S"
+  }
+  tags = {
+    Name = "users-table"
+  }
+}
+
+# Tạo VPC endpoint: Đường kết nối từ EC2 tới dynamodb
+resource "aws_vpc_endpoint" "dynamodb" {
+  vpc_id = aws_vpc.this.id
+  service_name = "com.amazonaws.ap-southeast-1.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids = [ aws_route_table.private.id ]
 }
