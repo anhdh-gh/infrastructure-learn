@@ -283,8 +283,8 @@ resource "aws_launch_template" "app" {
 
 resource "aws_autoscaling_group" "app" {
   desired_capacity = 2
-  max_size = 3
-  min_size = 1
+  max_size = 4
+  min_size = 2
   launch_template {
     id = aws_launch_template.app.id
     version = "$Latest"
@@ -328,7 +328,7 @@ resource "aws_autoscaling_policy" "scale_down" {
 resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   alarm_name          = "cpu-low"
   comparison_operator = "LessThanThreshold"
-  threshold           = 1 # 1% For test
+  threshold           = 30
   evaluation_periods = 2
   period             = 60
   metric_name = "CPUUtilization"
