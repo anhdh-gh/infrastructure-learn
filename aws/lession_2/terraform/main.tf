@@ -172,8 +172,24 @@ resource "aws_instance" this {
   }
 }
 
+# EC2 private 2
+resource "aws_instance" "ec2-private-2" {
+  ami = "ami-05e0d9d655f80bc27"
+  instance_type = "t2.micro"
+  subnet_id = aws_subnet.private-app.id
+  iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
+  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  tags = {
+    Name = "3tier-ec2-private-2"
+  }
+}
+
 output "ec2_instance_id" {
   value = aws_instance.this.id
+}
+
+output "ec2_instance_id_2" {
+  value = aws_instance.ec2-private-2.id
 }
 
 # ======================== Application Load Balancer (1 Vpc - N ALB) ========================
@@ -222,9 +238,15 @@ resource "aws_alb_listener" listener {
   }
 }
 
-resource "aws_lb_target_group_attachment" "this" {
+resource "aws_lb_target_group_attachment" "tg-ec2" {
   target_group_arn = aws_lb_target_group.this.arn
   target_id = aws_instance.this.id
+  port = 8080
+}
+
+resource "aws_lb_target_group_attachment" "tg-ec2-2" {
+  target_group_arn = aws_lb_target_group.this.arn
+  target_id = aws_instance.ec2-private-2.id
   port = 8080
 }
 
