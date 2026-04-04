@@ -399,8 +399,9 @@ resource "aws_apigatewayv2_integration" "alb_integration" {
 # Map path
 resource "aws_apigatewayv2_route" "default" {
   api_id = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /{proxy+}"
+  route_key = "ANY /"
   target = "integrations/${aws_apigatewayv2_integration.alb_integration.id}"
+  authorization_type = "NONE"
 }
 
 # Stage
@@ -412,3 +413,47 @@ resource "aws_apigatewayv2_stage" "default" {
 
 # ======================== Cognito ========================
 # User pool
+resource "aws_cognito_user_pool" "pool" {
+  name = "user-pool"
+  auto_verified_attributes = ["email"]
+}
+
+resource "aws_cognito_user_pool_domain" "user_pool_domain" {
+  domain = "test-auth-lab"
+  user_pool_id = aws_cognito_user_pool.pool.id
+}
+
+# User pool client (app call cognito to login)
+resource "aws_cognito_user_pool_client" "client" {
+  name = "app-client"
+  user_pool_id = aws_cognito_user_pool.pool.id
+  generate_secret = false
+
+  explicit_auth_flows = [
+    "ALLOW_USER_PASSWORD_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH"
+  ]
+}
+
+# Authentication
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id = aws_apigatewayv2_api.http_api.id
+  name = "cognito-auth"
+  authorizer_type = "JWT"
+  identity_sources = [ "$request.header.Authorization" ]
+  jwt_configuration {
+    audience = [ aws_cognito_user_pool_client.client.id ]
+    issuer = "https://${aws_cognito_user_pool.pool.endpoint}"
+  }
+}
+
+# Map path (Auth, ignore /)
+resource "aws_apigatewayv2_route" "proxy" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.alb_integration.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
