@@ -167,17 +167,17 @@ resource "aws_iam_role_policy_attachment" "dynamodb" {
 
 # Create EC2 instance
 # 1 instance - N Security Group
-# resource "aws_instance" this {
-#   ami = "ami-05e0d9d655f80bc27"
-#   instance_type = "t2.micro"
-#   subnet_id = aws_subnet.private-app.id
-#   iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
-#   vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
-#   depends_on = [ aws_nat_gateway.this ]
-#   tags = {
-#     Name = "3tier-ec2-private"
-#   }
-# }
+resource "aws_instance" this {
+  ami = "ami-05e0d9d655f80bc27"
+  instance_type = "t2.micro"
+  subnet_id = aws_subnet.private-app.id
+  iam_instance_profile = aws_iam_instance_profile.ec2-profile.name
+  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  depends_on = [ aws_nat_gateway.this ]
+  tags = {
+    Name = "3tier-ec2-private"
+  }
+}
 
 # ======================== Application Load Balancer (1 Vpc - N ALB) ========================
 resource "aws_security_group" "alb-sg" {
@@ -264,78 +264,110 @@ resource "aws_vpc_endpoint" "dynamodb" {
 # }
 
 # ======================== Auto Scaling Group ========================
-resource "aws_launch_template" "app" {
-  name_prefix   = "app-template"
-  image_id      = "ami-0914799bdc2a07d8d"
-  instance_type = "t2.micro"
-  iam_instance_profile {
-    name = aws_iam_instance_profile.ec2-profile.name
-  }
-  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
-  user_data = base64encode(<<-EOF
-      #!/bin/bash
-      sudo docker pull anhdhdocker/java-springboot-service:latest
-      sudo docker rm -f springboot-app || true
-      sudo docker run -d --name springboot-app -p 8080:8080 anhdhdocker/java-springboot-service:latest
-    EOF
-  )
-}
-
-resource "aws_autoscaling_group" "app" {
-  desired_capacity = 2
-  max_size = 4
-  min_size = 2
-  launch_template {
-    id = aws_launch_template.app.id
-    version = "$Latest"
-  }
-  vpc_zone_identifier = [ aws_subnet.private-app.id ] # Subnet mà EC2 sẽ tạo
-  target_group_arns = [ aws_lb_target_group.this.arn ] # Attach vào ALB
-  health_check_type = "EC2" # ELB - Check health qua ALB, EC2 - Check sống/chết
-}
-
-# Scale up
-resource "aws_autoscaling_policy" "scale_up" {
-  name                   = "scale-up"
-  scaling_adjustment     = 1
-  adjustment_type        = "ChangeInCapacity"
-  autoscaling_group_name = aws_autoscaling_group.app.name
-}
-
-resource "aws_cloudwatch_metric_alarm" "cpu_high" {
-  alarm_name          = "cpu_high"
-  comparison_operator = "GreaterThanThreshold"
-  threshold = 70
-  evaluation_periods = 2 # CPU > 70% trong 2 phút liên tiếp → alarm kích hoạt
-  period = 60
-  metric_name = "CPUUtilization"
-  namespace   = "AWS/EC2"
-  statistic   = "Average"
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.app.name
-  }
-  alarm_actions = [aws_autoscaling_policy.scale_up.arn]
-}
-
-# Scale down
-resource "aws_autoscaling_policy" "scale_down" {
-  name                   = "scale-down"
-  scaling_adjustment     = -1
-  adjustment_type        = "ChangeInCapacity"
-  autoscaling_group_name = aws_autoscaling_group.app.name
-}
-
-resource "aws_cloudwatch_metric_alarm" "cpu_low" {
-  alarm_name          = "cpu-low"
-  comparison_operator = "LessThanThreshold"
-  threshold           = 30
-  evaluation_periods = 2
-  period             = 60
-  metric_name = "CPUUtilization"
-  namespace   = "AWS/EC2"
-  statistic   = "Average"
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.app.name
-  }
-  alarm_actions = [aws_autoscaling_policy.scale_down.arn]
-}
+# resource "aws_launch_template" "app" {
+#   name_prefix   = "app-template"
+#   image_id      = "ami-078edf7bc6f2c86fe"
+#   instance_type = "t2.micro"
+#
+#   iam_instance_profile {
+#     name = aws_iam_instance_profile.ec2-profile.name
+#   }
+#
+#   vpc_security_group_ids = [
+#     aws_security_group.ec2-sg.id
+#   ]
+#
+#   user_data = base64encode(<<-EOF
+#     #!/bin/bash
+#
+#     # Update system
+#     yum update -y
+#
+#     # Install Docker
+#     amazon-linux-extras install docker -y
+#
+#     # Start Docker
+#     systemctl start docker
+#     systemctl enable docker
+#
+#     # Add ec2-user to docker group
+#     usermod -aG docker ec2-user
+#
+#     # Wait Docker ready
+#     sleep 10
+#
+#     # Pull image
+#     docker pull anhdhdocker/java-springboot-service:latest
+#
+#     # Remove old container if exists
+#     docker rm -f springboot-app || true
+#
+#     # Run new container
+#     docker run -d \
+#       --name springboot-app \
+#       -p 8080:8080 \
+#       anhdhdocker/java-springboot-service:latest
+#
+#     echo "Application started on port 8080"
+#   EOF
+#   )
+# }
+#
+# resource "aws_autoscaling_group" "app" {
+#   desired_capacity = 1
+#   max_size = 2
+#   min_size = 1
+#   launch_template {
+#     id = aws_launch_template.app.id
+#     version = "$Latest"
+#   }
+#   vpc_zone_identifier = [ aws_subnet.private-app.id ] # Subnet mà EC2 sẽ tạo
+#   target_group_arns = [ aws_lb_target_group.this.arn ] # Attach vào ALB
+#   health_check_type = "EC2" # ELB - Check health qua ALB, EC2 - Check sống/chết
+# }
+#
+# # Scale up
+# resource "aws_autoscaling_policy" "scale_up" {
+#   name                   = "scale-up"
+#   scaling_adjustment     = 1
+#   adjustment_type        = "ChangeInCapacity"
+#   autoscaling_group_name = aws_autoscaling_group.app.name
+# }
+#
+# resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+#   alarm_name          = "cpu_high"
+#   comparison_operator = "GreaterThanThreshold"
+#   threshold = 70
+#   evaluation_periods = 2 # CPU > 70% trong 2 phút liên tiếp → alarm kích hoạt
+#   period = 60
+#   metric_name = "CPUUtilization"
+#   namespace   = "AWS/EC2"
+#   statistic   = "Average"
+#   dimensions = {
+#     AutoScalingGroupName = aws_autoscaling_group.app.name
+#   }
+#   alarm_actions = [aws_autoscaling_policy.scale_up.arn]
+# }
+#
+# # Scale down
+# resource "aws_autoscaling_policy" "scale_down" {
+#   name                   = "scale-down"
+#   scaling_adjustment     = -1
+#   adjustment_type        = "ChangeInCapacity"
+#   autoscaling_group_name = aws_autoscaling_group.app.name
+# }
+#
+# resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+#   alarm_name          = "cpu-low"
+#   comparison_operator = "LessThanThreshold"
+#   threshold           = 30
+#   evaluation_periods = 2
+#   period             = 60
+#   metric_name = "CPUUtilization"
+#   namespace   = "AWS/EC2"
+#   statistic   = "Average"
+#   dimensions = {
+#     AutoScalingGroupName = aws_autoscaling_group.app.name
+#   }
+#   alarm_actions = [aws_autoscaling_policy.scale_down.arn]
+# }
