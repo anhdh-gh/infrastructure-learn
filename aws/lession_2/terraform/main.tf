@@ -391,6 +391,9 @@ resource "aws_apigatewayv2_integration" "alb_integration" {
   integration_uri = "http://${aws_lb.this.dns_name}"
   integration_method = "ANY"
   payload_format_version = "1.0"
+  request_parameters = {
+    "overwrite:path" = "$request.path" # Forward path to service
+  }
 }
 
 # Map path
@@ -406,3 +409,6 @@ resource "aws_apigatewayv2_stage" "default" {
   name = "$default"
   auto_deploy = true
 }
+
+# ======================== Cognito ========================
+# User pool
