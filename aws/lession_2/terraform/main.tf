@@ -98,6 +98,11 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_2" {
+  subnet_id      = aws_subnet.public-2.id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
   route {
@@ -370,4 +375,34 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
     AutoScalingGroupName = aws_autoscaling_group.app.name
   }
   alarm_actions = [aws_autoscaling_policy.scale_down.arn]
+}
+
+# ======================== API Gateway ========================
+# Client -> API Gateway -> ALB -> EC2 (Spring Boot)
+resource "aws_apigatewayv2_api" "http_api" {
+  name = "http-api"
+  protocol_type = "HTTP"
+}
+
+# API GW -> ALB
+resource "aws_apigatewayv2_integration" "alb_integration" {
+  api_id = aws_apigatewayv2_api.http_api.id
+  integration_type = "HTTP_PROXY"
+  integration_uri = "http://${aws_lb.this.dns_name}"
+  integration_method = "ANY"
+  payload_format_version = "1.0"
+}
+
+# Map path
+resource "aws_apigatewayv2_route" "default" {
+  api_id = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /{proxy+}"
+  target = "integrations/${aws_apigatewayv2_integration.alb_integration.id}"
+}
+
+# Stage
+resource "aws_apigatewayv2_stage" "default" {
+  api_id = aws_apigatewayv2_api.http_api.id
+  name = "$default"
+  auto_deploy = true
 }
