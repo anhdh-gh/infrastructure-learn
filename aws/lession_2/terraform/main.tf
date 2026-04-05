@@ -193,7 +193,7 @@ resource "aws_security_group" "alb-sg" {
     from_port = 80
     to_port = 80
     protocol = "TCP"
-    cidr_blocks = [ "0.0.0.0/0" ]
+    security_groups = [ aws_security_group.vpc-link-sg.id ]
   }
 
   # Outbound allow when forward request to EC2 private (8080)
@@ -209,7 +209,8 @@ resource "aws_security_group" "alb-sg" {
 resource "aws_lb" "this" {
   name = "alb"
   load_balancer_type = "application"
-  subnets = [ aws_subnet.public.id, aws_subnet.public-2.id ] // ALB required 2 public subnet for HA
+  internal           = true                       # ALB private
+  subnets            = [ aws_subnet.private-app.id, aws_subnet.private-db.id ] # Private subnet
   security_groups = [ aws_security_group.alb-sg.id ]
 }
 
@@ -384,11 +385,33 @@ resource "aws_apigatewayv2_api" "http_api" {
   protocol_type = "HTTP"
 }
 
+resource "aws_security_group" "vpc-link-sg" {
+  vpc_id = aws_vpc.this.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_apigatewayv2_vpc_link" "alb_vpc_link" {
+  name = "alb-private-link"
+  subnet_ids = [ aws_subnet.private-app.id, aws_subnet.private-db.id ]
+  security_group_ids = [ aws_security_group.vpc-link-sg.id ]
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # API GW -> ALB
 resource "aws_apigatewayv2_integration" "alb_integration" {
   api_id = aws_apigatewayv2_api.http_api.id
   integration_type = "HTTP_PROXY"
-  integration_uri = "http://${aws_lb.this.dns_name}"
+  integration_uri = aws_alb_listener.listener.arn
+  connection_type       = "VPC_LINK"
+  connection_id         = aws_apigatewayv2_vpc_link.alb_vpc_link.id
   integration_method = "ANY"
   payload_format_version = "1.0"
   request_parameters = {
